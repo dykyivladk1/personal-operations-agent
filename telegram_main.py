@@ -2,7 +2,7 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from telebot.async_telebot import AsyncTeleBot
-
+from openai import OpenAI
 
 from langchain.agents import create_agent
 from langchain_core.utils.uuid import uuid7
@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
+client = OpenAI()
 
 agent = create_agent(
     model = 'openai:gpt-6-luna',
@@ -24,8 +24,11 @@ agent = create_agent(
 bot = AsyncTeleBot(TELEGRAM_TOKEN)
 
 @bot.message_handler(func = lambda message: True, content_types = ['text'])
-async def ask(message):
-    user_message = message.text
+async def ask(message, user_message = None):
+
+    if user_message is None:
+        user_message = message.text
+
     config = {"configurable": {"thread_id": str(message.chat.id)}}
     text = ''
     draft_id = 1
@@ -34,6 +37,7 @@ async def ask(message):
     async for chunk in generate_response(user_message, config):
         text += chunk
         now = asyncio.get_running_loop().time()
+
         if now - last_update >= 0.5:
             await bot.send_message_draft(
                 chat_id = message.chat.id,
@@ -45,6 +49,7 @@ async def ask(message):
     await bot.send_message(message.chat.id, text)
     #TODO: Handle Telegram long message limit
 
+
 async def generate_response(input: str, config):
     stream = agent.astream(
         {"messages": [{"role": "user", "content": input}]},
@@ -55,5 +60,23 @@ async def generate_response(input: str, config):
     async for message, metadata in stream:
         if message.content and isinstance(message.content, str):
             yield message.content
+
+
+@bot.message_handler(content_types = ['voice'])
+async def handle_voice(message):
+    file_info = await bot.get_file(message.voice.file_id)
+    audio_bytes = await bot.download_file(file_info.file_path)
+
+    with open('voice.ogg', 'wb') as file:
+        file.write(audio_bytes)
+
+    with open('voice.ogg', 'rb') as audio_file:
+        transcription = client.audio.transcriptions.create(
+            model = 'gpt-transcribe', file = audio_file
+        )
+
+    await ask(message = message,
+              user_message = transcription.text)
+
 
 asyncio.run(bot.infinity_polling())
