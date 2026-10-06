@@ -5,9 +5,16 @@ from telebot.async_telebot import AsyncTeleBot
 from openai import OpenAI
 
 from langchain.agents import create_agent
-from langchain_core.utils.uuid import uuid7
-from langchain.messages import HumanMessage
+from langchain.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
+
+from agent.tools import (
+    create_event,
+    get_events,
+    create_email_draft,
+    get_emails,
+    send_email
+)
 
 
 load_dotenv()
@@ -17,7 +24,14 @@ client = OpenAI()
 
 agent = create_agent(
     model = 'openai:gpt-6-luna',
-    checkpointer = InMemorySaver()
+    checkpointer = InMemorySaver(),
+    tools = [
+        get_events,
+        create_event,
+        get_emails,
+        create_email_draft,
+        send_email
+    ]
 )
 
 
@@ -49,17 +63,26 @@ async def ask(message, user_message = None):
     await bot.send_message(message.chat.id, text)
     #TODO: Handle Telegram long message limit
 
-
 async def generate_response(input: str, config):
     stream = agent.astream(
-        {"messages": [{"role": "user", "content": input}]},
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": input,
+                }
+            ]
+        },
         config=config,
-        stream_mode="messages"
+        stream_mode="messages",
     )
 
     async for message, metadata in stream:
-        if message.content and isinstance(message.content, str):
-            yield message.content
+        if isinstance(message, AIMessage):
+            chunk = str(message.text)
+
+            if chunk:
+                yield chunk
 
 
 @bot.message_handler(content_types = ['voice'])
